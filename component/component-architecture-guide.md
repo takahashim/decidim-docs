@@ -295,7 +295,7 @@ CREATE TABLE decidim_components (
   participatory_space_id bigint NOT NULL,
   settings jsonb DEFAULT '{}',
   weight integer DEFAULT 0,
-  permissions jsonb DEFAULT '{}',
+  permissions jsonb,
   published_at timestamp,
   created_at timestamp NOT NULL,
   updated_at timestamp NOT NULL

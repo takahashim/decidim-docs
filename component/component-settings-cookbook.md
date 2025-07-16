@@ -134,6 +134,8 @@ end
 
 #### 4. 管理画面での設定表示の改善
 
+Decidimは設定を自動的に管理画面に表示します。そのため、通常は特別なビューの作成は不要です。
+
 ```erb
 <%# app/views/decidim/admin/components/_comment_settings.html.erb %>
 <div class="card" id="comment-settings">
@@ -360,15 +362,16 @@ end
 
 ### 実装例
 
-#### 1. デコレーターパターンを使用
+#### イニシャライザーでの拡張（推奨方法）
 
 ```ruby
-# app/decorators/decidim/proposals/component_decorator.rb
-Decidim::Proposals::ComponentManifest.class_eval do
-  settings(:global) do |settings|
-    # 既存の設定は保持される
-    
-    # 新しい設定を追加
+# config/initializers/decidim_proposals_extensions.rb
+Rails.application.config.to_prepare do
+  # 既存のコンポーネントマニフェストを取得
+  manifest = Decidim.find_component_manifest(:proposals)
+  
+  # 新しい設定を追加
+  manifest.settings(:global) do |settings|
     settings.attribute :require_author_verification,
       type: :boolean,
       default: false
@@ -380,23 +383,22 @@ Decidim::Proposals::ComponentManifest.class_eval do
         # 承認が必要な場合は自動公開を無効化
         context[:component].settings.proposal_answering_enabled
       }
+      
+    settings.attribute :custom_field_1, type: :string
+    settings.attribute :custom_field_2, type: :boolean, default: true
+  end
+  
+  # 統計情報の追加例
+  manifest.register_stat :comments_count, tag: :comments do |components, start_at, end_at|
+    Decidim::Comments::Comment.where(
+      decidim_root_commentable_type: "Decidim::Proposals::Proposal",
+      decidim_root_commentable_id: Decidim::Proposals::Proposal.where(component: components).pluck(:id)
+    ).count
   end
 end
 ```
 
-#### 2. イニシャライザーでの拡張
-
-```ruby
-# config/initializers/decidim_proposals_extensions.rb
-Rails.application.config.to_prepare do
-  Decidim.find_component_manifest(:proposals).tap do |manifest|
-    manifest.settings(:global) do |settings|
-      settings.attribute :custom_field_1, type: :string
-      settings.attribute :custom_field_2, type: :boolean, default: true
-    end
-  end
-end
-```
+**注意**: デコレーターパターン（`class_eval`を使用）も技術的には可能ですが、Decidimでは`Rails.application.config.to_prepare`内で`Decidim.find_component_manifest`を使用する方法が推奨されています。これにより、開発環境でのリロードが適切に処理され、本番環境でも確実に動作します。
 
 ## 設定のグループ化とUI改善
 
