@@ -131,21 +131,14 @@ end
 ```ruby
 # decidim-core/lib/decidim/core.rb
 module Decidim
-  module Core
-    # コンポーネントレジストリの定義
-    def self.component_registry
-      @component_registry ||= Decidim::ManifestRegistry.new(:components)
-    end
-    
-    # register_componentメソッドの定義
-    def self.register_component(name)
-      manifest = Decidim::ComponentManifest.new(name: name.to_sym)
-      
-      yield(manifest)
-      manifest.validate!
-      
-      component_registry.register(manifest)
-    end
+  # コンポーネントレジストリの定義
+  def self.component_registry
+    @component_registry ||= ManifestRegistry.new(:components)
+  end
+  
+  # register_componentメソッドの定義
+  def self.register_component(name)
+    component_registry.register(name, &)
   end
 end
 ```
@@ -156,18 +149,25 @@ end
 # decidim-core/lib/decidim/manifest_registry.rb
 module Decidim
   class ManifestRegistry
-    def initialize(entity_name)
-      @entity_name = entity_name
-      @manifests = Set.new
+    def initialize(entity)
+      @entity = entity
     end
     
-    def register(manifest)
-      raise ManifestAlreadyRegistered if find(manifest.name)
-      @manifests << manifest
+    def register(name)
+      manifest = manifest_class.new(name: name.to_sym)
+      yield(manifest)
+      manifest.validate!
+      manifests << manifest
     end
     
     def find(name)
-      @manifests.find { |manifest| manifest.name.to_sym == name.to_sym }
+      name = name.to_s
+      manifests.find do |manifest|
+        manifest_name = manifest.name.to_s
+        manifest_name == name ||
+          manifest.try(:model_class_name) == name ||
+          manifest_name.pluralize == name
+      end
     end
   end
 end
@@ -186,36 +186,27 @@ module Decidim
       
       # ルーティングの定義
       routes do
-        resources :proposals do
+        resources :proposals, except: [:destroy] do
           member do
-            get :compare
-            get :complete
+            get :edit_draft
+            patch :update_draft
             get :preview
+            # ...
           end
         end
       end
       
       # 初期化処理
-      initializer "decidim_proposals.icons" do
-        Decidim.icons.register(name: "chat-new-line", icon: "chat-new-line", category: "system")
+      initializer "decidim_proposals.register_icons" do
+        Decidim.icons.register(name: "Decidim::Proposals::CollaborativeDraft", icon: "draft-line", category: "activity",
+                               description: "Collaborative draft", engine: :proposals)
+        Decidim.icons.register(name: "Decidim::Proposals::Proposal", icon: "chat-new-line", category: "activity",
+                               description: "Proposal", engine: :proposals)
       end
-      
+
       initializer "decidim_proposals.view_hooks" do
-        Decidim.view_hooks.register(:participatory_space_highlighted_elements) do |view_context|
-          view_context.cell("decidim/proposals/highlighted_proposals")
-        end
-      end
-      
-      initializer "decidim_proposals.gamification_badges" do
-        Decidim::Gamification.register_badge(:proposals) do |badge|
-          badge.levels = [1, 5, 10, 30, 60]
-          badge.reset = ->(_user) { Decidim::Proposals::Proposal.where(author: _user).count }
-        end
-      end
-      
-      initializer "decidim_proposals.metrics" do
-        Decidim.metrics_registry.register(:proposals) do |metric_manifest|
-          metric_manifest.manager_class = "Decidim::Proposals::Metrics::ProposalsMetricManage"
+        Decidim.view_hooks.register(:participatory_space_highlighted_elements, priority: Decidim::ViewHooks::MEDIUM_PRIORITY) do |view_context|
+          view_context.cell("decidim/proposals/highlighted_proposals", view_context.current_participatory_space)
         end
       end
     end
