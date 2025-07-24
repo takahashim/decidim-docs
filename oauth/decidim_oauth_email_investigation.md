@@ -8,7 +8,7 @@
 ### 調査した主な疑問点
 1. すでに通常のログイン用に登録されているメールアドレスを使って、OAuth2で同じメールアドレスを使った別のアカウントを作ることが可能か？
 2. 同じメールアドレスであればOAuth2のユーザーは自動的に通常ログイン用のアカウントと紐付けられるのか？
-3. その他の処理パターンがあるか？
+3. メールアドレスを持たないOAuth2プロバイダーの場合はどうなるか？
 
 ## 調査方法
 
@@ -26,6 +26,8 @@
   - OAuth認証後のユーザー作成/紐付けロジックの中核
 - `/decidim/decidim-core/app/controllers/decidim/devise/omniauth_registrations_controller.rb`
   - OmniAuthコールバックのコントローラー
+- `/decidim/decidim-core/app/forms/decidim/omniauth_registration_form.rb`
+  - OmniAuth登録フォーム（メールアドレス必須バリデーション含む）
 - `/decidim/decidim-core/app/models/decidim/user.rb`
   - ユーザーモデルのバリデーション定義
 - `/decidim/decidim-core/app/models/decidim/identity.rb`
@@ -103,6 +105,15 @@ validates :uid, presence: true, uniqueness: { scope: [:provider, :organization] 
 
 - provider + uid + organizationの組み合わせでユニーク
 
+#### 3.3 OmniauthRegistrationFormのバリデーション
+
+```ruby
+# decidim/decidim-core/app/forms/decidim/omniauth_registration_form.rb:18
+validates :email, presence: true
+```
+
+- フォームレベルでメールアドレスは必須
+
 ### 4. 動作パターン
 
 #### パターン1: 新規ユーザー（メールアドレスが未登録）
@@ -126,6 +137,14 @@ validates :uid, presence: true, uniqueness: { scope: [:provider, :organization] 
 1. existing_identityが見つかる
 2. 紐付けられているユーザーでログイン
 3. 新規作成処理はスキップ
+
+#### パターン5: メールアドレスを持たないOAuth2プロバイダー
+1. verified_emailがnullとなる
+2. OmniauthRegistrationFormのバリデーションエラー（email必須）
+3. `broadcast(:invalid)`が発生
+4. メールアドレス入力画面（new.html.erb）が表示される
+5. ユーザーが手動でメールアドレスを入力
+6. 新規ユーザーとして作成（既存アカウントとの統合なし）
 
 ### 5. テストコードによる動作確認
 
@@ -166,6 +185,44 @@ context "with an unverified email" do
 end
 ```
 
+### 6. メールアドレスを持たないOAuth2プロバイダーの処理詳細
+
+#### 6.1 処理フロー
+
+1. **OmniAuthコールバック時**
+   ```ruby
+   # OmniauthRegistrationsController#create
+   @form.email ||= verified_email  # verified_emailがnullならform.emailもnull
+   ```
+
+2. **フォームバリデーション**
+   ```ruby
+   # OmniauthRegistrationForm
+   validates :email, presence: true  # メールアドレス必須
+   ```
+
+3. **エラー時の画面表示**
+   ```ruby
+   on(:invalid) do
+     set_flash_message :notice, :success, kind: @form.provider.capitalize
+     render :new  # メールアドレス入力画面を表示
+   end
+   ```
+
+4. **メールアドレス入力画面**
+   - ファイル: `/decidim/decidim-core/app/views/decidim/devise/omniauth_registrations/new.html.erb`
+   - 入力項目：
+     - 名前（name）
+     - ニックネーム（nickname）
+     - メールアドレス（email） - 手動入力必須
+
+5. **手動入力後の処理**
+   ```ruby
+   # CreateOmniauthRegistration#create_or_find_user
+   @user.email = (verified_email || form.email)  # 手動入力されたメールアドレスを使用
+   @user.skip_confirmation! if verified_email    # verified_emailがnullなら確認プロセスが必要
+   ```
+
 ## 結論
 
 ### 質問への回答
@@ -177,8 +234,11 @@ end
    - **verified_emailがある場合のみ自動的に紐付けられます**。
    - OAuthプロバイダーがメールアドレスを検証済みとして提供する場合のみ、既存アカウントと統合されます。
 
-3. **その他の処理パターン**
-   - verified_emailがない場合はエラーとなり、手動での紐付けや別途の確認プロセスが必要になります。
+3. **メールアドレスを持たないOAuth2プロバイダーの場合はどうなるか？**
+   - **追加のメールアドレス入力画面が表示されます**。
+   - ユーザーは手動でメールアドレスを入力する必要があります。
+   - 入力されたメールアドレスで新規アカウントが作成されます（既存アカウントとの自動統合なし）。
+   - メールアドレスの確認プロセスが必要になります。
 
 ### セキュリティ上の考慮点
 
@@ -194,17 +254,32 @@ end
    - 一人のユーザーが複数のOAuthプロバイダー（Facebook、Google、LINE等）を使用可能
    - 各プロバイダーはIdentityレコードで管理
 
+4. **メールアドレスなしプロバイダーへの対応**
+   - 手動入力を要求することで、必ずメールアドレスを持つユーザーアカウントを作成
+   - 既存アカウントとの自動統合を行わないことで、なりすましを防止
+
 ### 推奨事項
 
-1. OAuthプロバイダーの設定時は、必ずメールアドレスの取得と検証状態の確認を有効にする
-2. ユーザーへの説明では、既存アカウントと同じメールアドレスでOAuth認証すると自動的に統合されることを明記
-3. verified_emailが取得できないプロバイダーを使用する場合は、別途メール確認プロセスを検討
+1. **OAuthプロバイダーの設定**
+   - 可能な限りメールアドレスの取得と検証状態の確認を有効にする
+   - メールアドレスを提供しないプロバイダーを使用する場合は、ユーザーへの説明を充実させる
+
+2. **ユーザーへの説明**
+   - 既存アカウントと同じメールアドレスでOAuth認証すると自動的に統合されることを明記
+   - メールアドレスを持たないプロバイダーの場合、追加入力が必要なことを説明
+
+3. **既存アカウントとの統合**
+   - メールアドレスなしプロバイダーで既存アカウントとの統合を希望する場合：
+     - 先に既存アカウントでログイン後、プロフィール設定からOAuthプロバイダーを追加
+     - または管理者による手動統合
 
 ## 参考情報
 
 ### 関連ファイル一覧
 - コア実装: `/decidim/decidim-core/app/commands/decidim/create_omniauth_registration.rb`
 - コントローラー: `/decidim/decidim-core/app/controllers/decidim/devise/omniauth_registrations_controller.rb`
+- フォーム: `/decidim/decidim-core/app/forms/decidim/omniauth_registration_form.rb`
+- ビュー: `/decidim/decidim-core/app/views/decidim/devise/omniauth_registrations/new.html.erb`
 - モデル: `/decidim/decidim-core/app/models/decidim/user.rb`, `/decidim/decidim-core/app/models/decidim/identity.rb`
 - テスト: `/decidim/decidim-core/spec/commands/decidim/create_omniauth_registration_spec.rb`
 - カスタマイズ: `/decidim-cfj/decidim-user_extension/app/commands/concerns/decidim/user_extension/create_omniauth_commands_overrides.rb`
