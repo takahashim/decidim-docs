@@ -14,3 +14,7 @@ Decidimのコンポーネントシステムに関する包括的なドキュメ�
 ### [OAuth認証](./oauth/)
 
 - [OAuth2メールアドレス処理に関する調査報告](./oauth/decidim_oauth_email_investigation.md) - DecidimにおけるOAuth2ログイン時のメールアドレスの扱いと、既存アカウントとの紐付け処理の仕組みについての詳細な調査報告書
+
+### [モバイル版ロゴ追加](./mobile_logo/)
+
+- [モバイル版ロゴ機能追加の実装仕様](./mobile_logo/mobile_logo_implementation_specification.md) - モバイル版専用のロゴ画像を追加し、現在faviconが使用されている箇所で新しいモバイルロゴを表示できるようにするための機能追加仕様書
