@@ -11,7 +11,7 @@ Decidim::Organizationにモバイル版専用のロゴ画像を追加し、現�
 - **管理画面**: OrganizationAppearanceControllerとFormで画像アップロード機能を提供
 
 ### 技術スタック
-- Active Storage for file uploads
+- Active Storageによるファイルアップロード
 - ImageUploader基底クラスによる画像処理
 - Decidim::Admin::UpdateOrganizationAppearanceコマンドパターン
 
@@ -20,26 +20,14 @@ Decidim::Organizationにモバイル版専用のロゴ画像を追加し、現�
 ### A. データベース拡張
 Active Storageを使用するため、マイグレーションでのカラム追加は不要。
 
-```ruby
-# マイグレーション: db/migrate/[timestamp]_add_mobile_logo_to_decidim_organizations.rb
-class AddMobileLogoToDecidimOrganizations < ActiveRecord::Migration[6.1]
-  def change
-    # Active Storageを使用するため、カラム追加は不要
-    # このマイグレーションは実行記録のためのみ
-  end
-end
-```
-
 ### B. モデル拡張
 Organizationモデルにmobile_logoアタッチメントを追加。
 
 ```ruby
-# decidim-cfj/app/decorators/models/decidim/organization_decorator.rb
-module Decidim
-  Organization.class_eval do
-    has_one_attached :mobile_logo
-    validates_upload :mobile_logo, uploader: Decidim::OrganizationMobileLogoUploader
-  end
+# decidim-cfj/config/initializers/decidim_override.rb
+Decidim::Organization.class_eval do
+  has_one_attached :mobile_logo
+  validates_upload :mobile_logo, uploader: Decidim::OrganizationMobileLogoUploader
 end
 ```
 
@@ -52,15 +40,7 @@ module Decidim
   class OrganizationMobileLogoUploader < ImageUploader
     set_variants do
       {
-        small: { resize_to_fit: [180, 60] },
         medium: { resize_to_fit: [360, 120] }
-      }
-    end
-
-    def dimensions_info
-      {
-        small: { processor: :resize_to_fit, dimensions: [180, 60] },
-        medium: { processor: :resize_to_fit, dimensions: [360, 120] }
       }
     end
   end
@@ -71,7 +51,7 @@ end
 OrganizationAppearanceFormにモバイルロゴフィールドを追加。
 
 ```ruby
-# decidim-cfj/app/decorators/forms/decidim/admin/organization_appearance_form_decorator.rb
+# decidim-cfj/config/initializers/decidim_override.rb
 Decidim::Admin::OrganizationAppearanceForm.class_eval do
   attribute :mobile_logo
   attribute :remove_mobile_logo, Boolean, default: false
@@ -84,15 +64,9 @@ end
 UpdateOrganizationAppearanceコマンドでmobile_logoを処理できるように拡張。
 
 ```ruby
-# decidim-cfj/app/decorators/commands/decidim/admin/update_organization_appearance_decorator.rb
+# decidim-cfj/config/initializers/decidim_override.rb
 Decidim::Admin::UpdateOrganizationAppearance.class_eval do
-  # mobile_logoをファイル属性として追加
-  def self.fetch_file_attributes(*attrs)
-    @file_attributes ||= []
-    @file_attributes += attrs
-    @file_attributes << :mobile_logo unless @file_attributes.include?(:mobile_logo)
-    @file_attributes
-  end
+  fetch_file_attributes :mobile_logo
 end
 ```
 
@@ -122,24 +96,15 @@ end
 Defaceを使用して管理画面にモバイルロゴアップロードフィールドを追加。
 
 ```ruby
-# decidim-cfj/app/overrides/add_mobile_logo_to_organization_appearance.rb
-Deface::Override.new(
-  virtual_path: "decidim/admin/organization_appearance/form/_images",
-  name: "add_mobile_logo_field",
-  insert_after: "[data-fieldset-for='favicon']",
-  text: %q{
+# decidim-cfj/app/views/decidim/admin/organization_appearnce/form/_images.html.erb
     <div>
       <%= form.upload(
         :mobile_logo,
         dimensions_info: current_organization.attached_uploader(:mobile_logo).dimensions_info,
         extension_allowlist: current_organization.attached_uploader(:mobile_logo).extension_allowlist,
-        help_i18n_scope: "decidim.forms.file_help.image",
-        label: t("mobile_logo", scope: "activemodel.attributes.organization"),
         button_class: "button button__sm button__transparent-secondary"
       ) %>
     </div>
-  }
-)
 ```
 
 ### H. 言語ファイル
